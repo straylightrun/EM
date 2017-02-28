@@ -1,0 +1,281 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <script src="math.js" type="text/javascript"></script>
+  <script src="numeric-1.2.6.min.js" type="text/javascript"></script>
+  <script src="em.js" type="text/javascript"></script>
+  <script type="text/javascript" src="three.min.js"></script>
+  <script type="text/javascript" src="d3.min.js"></script>
+  <script type="text/javascript" src="jquery-2.2.2.min.js"></script>
+  <script type="text/javascript" src="plotly.min.js"></script>
+  <link rel="stylesheet" href="style.css">
+
+<script type="text/javascript">
+var nGaussians = 5;
+var EMer = null;
+var stepping = false;
+var stepper = null;
+var nPtsGauss = 10000;
+var x = [];
+var gaussLinspace = [];
+var nz = NormalZigg();
+var data = [];
+var llHistory = {x: [], y: []};
+var layout = {	
+		    	paper_bgcolor: '#fff',
+		    	showlegend: false,
+		    	xaxis: {
+		    		range: [0, 20]
+		    	},
+		    	margin: {
+							    l: 0.5,
+							    r: 0.5,
+							    b: 15,
+							    t: 0.5
+						}
+				};
+var layoutLL = {	
+		    	paper_bgcolor: '#fff',
+		    	showlegend: false,
+		    	margin: {
+							    l: 75,
+							    r: 5,
+							    b: 15,
+							    t: 0.5
+						}
+				};
+
+
+function sortNum(a,b) {return(a-b)}
+
+function generateData(nPts, model) {
+	x = [];
+	var boundaries = [ model[0][2] ];
+	for(var k = 1; k < model.length; k++) {
+		boundaries[k] = model[k][2] + boundaries[k-1];
+	}
+
+	for(var i = 0; i < nPts; i++) {
+		var phi = Math.random();
+		for(var k = 0; k < model.length; k++) {
+			if(phi < boundaries[k]) {
+				x[i] = nz(model[k][0], model[k][1]);
+				break;
+			}
+		}
+
+	}
+	x.sort(sortNum);
+}
+
+$(document).ready(function() {
+	// Generation of Data
+	generateData(30000, [[3,1,0.1], [10,1,0.5], [15, 1, 0.4]]);
+
+	data = [
+	  {
+	    x: x,
+	    type: 'histogram'
+	  }
+	];
+	Plotly.newPlot('vis', data, layout);
+
+	var llData = [{x: [], 
+				  y: [],
+				  type: "scatter"}];
+	Plotly.newPlot('visLL', llData, layoutLL);
+	
+	// Setup linspace for Gaussians later
+	var maxDat = Math.max(...data[0].x);
+	var minDat = Math.min(...data[0].x);
+	for(var i = 0; i < nPtsGauss; i++) {
+		gaussLinspace.push(i/nPtsGauss * (maxDat - minDat) + minDat);
+	}
+	
+	EMer = EM(data[0].x, plotEM, nGaussians);
+	callEMer();
+
+	// EM stepper
+	$("#stepEM")
+      .click(function( event ) {
+        callEMer();
+    });
+
+    // EM toggle/timer
+	$("#toggleEM")
+      .click(function( event ) {
+       	if(stepping) {
+       		clearInterval(stepper);
+       		stepping = false;
+       		$("#toggleEM").html('Start EM');
+       	} else {
+       		stepper = setInterval(callEMer, 200);
+       		stepping = true;
+       		$("#toggleEM").html('Stop EM');
+       	}
+    });    
+
+    // Regenerate EM data
+	$("#generate")
+      .click(function( event ) {
+      	var nModels = nGaussians;
+      	var models = [];
+      	var mu, s, mix = null;
+
+      	// Generate random models
+      	for (var i = 0; i < nModels; i++) {
+      		mu = Math.random()*19 + 1;
+      		s = Math.random()*0.25 + 0.15;
+      		mix = Math.random() + 0.01;	
+      		models.push([mu, s, mix]);
+      	}
+
+      	// Normalize mixing
+      	var mixTotal = 0;
+      	for (var i = 0; i < nModels; i++) {
+      		mixTotal += models[i][2];
+      	}
+      	for (var i = 0; i < nModels; i++) {
+      		models[i][2] = models[i][2] / mixTotal;
+      	}
+      	//console.log(models);
+      	var modstr = printModel(0, models);
+      	$("#modelDescription").html(modstr);
+
+      	generateData(nPtsGauss, models);
+
+		data = [
+	  		{
+	    		x: x,
+	    		type: 'histogram'
+	  		}
+		];
+		Plotly.newPlot('vis', data, layout);
+		EMer = EM(data[0].x, plotEM, nGaussians);
+      	
+      	if(stepping) {
+      		clearInterval(stepper);
+      		stepper = setInterval(callEMer, 200);
+      	}
+      	llHistory['x'] = [];
+       	llHistory['y'] = [];
+    });    
+
+    // Regenerate EM data
+	$("#resetEM")
+      .click(function( event ) {
+      	EMer = EM(data[0].x, plotEM, nGaussians);
+
+       	if(stepping) {
+       		clearInterval(stepper);
+       		stepper = setInterval(callEMer, 200);
+       	} else {
+       		callEMer();
+       	}
+
+		Plotly.newPlot('visLL', llData, layoutLL);
+       	llHistory['x'] = [];
+       	llHistory['y'] = [];
+    });   
+
+    // Add data by clicking on histogram
+	$('#clickPts').bind('click', function (ev) {
+	    var div = $(ev.target);
+	    
+	    var offset = div.offset();
+	    var xCoords = ev.clientX - offset.left;
+	    
+	    var xMin = x[0]; // should be sorted
+	    var xMax = x[x.length - 1];
+
+	    x.push(xCoords/700 * 20);
+	    x.sort(sortNum);
+	    
+	    data = [
+	  		{
+	    		x: x,
+	    		type: 'histogram'
+	  		}
+		];
+		Plotly.newPlot('vis', data, layout);
+	});
+
+});
+
+function callEMer() {
+	var EMerRes = EMer();
+	if(EMerRes['stationary'] && stepping) {
+		clearInterval(stepper);
+		stepping = false;
+		$("#toggleEM").html('Start EM');
+	}
+	$("#modelPrediction").html(EMerRes['modstr']);
+}
+
+function plotEM(model, w, ll, iter) {
+	var chartData = [];
+	for(var k = 0; k < w.length; k++) {
+		var wtpts = {
+			x: data[0].x,
+			y: w[k],
+			type: "scatter"
+		};
+		chartData.push(wtpts);
+	}
+	
+	//chartData.push(data);
+	//console.log(chartData);
+	
+	Plotly.newPlot('visWeights', chartData, layout);
+
+	//Generate data points from model Gaussians
+	var modelChartData = [];
+	for(var k = 0; k < model.length; k++){
+		var modelData = [];
+		for(var i = 0; i < nPtsGauss; i++) {
+			modelData.push(norm(gaussLinspace[i], model[k][0], Math.sqrt(model[k][1])) * model[k][2]);
+		}
+
+		var mpts = {
+			x: gaussLinspace,
+			y: modelData,
+			type: "scatter"
+		}
+		modelChartData.push(mpts);
+	}
+	Plotly.newPlot('visModel', modelChartData, layout);
+
+	//Visualize log likelihood
+	llHistory['x'].push(iter);
+	llHistory['y'].push(ll);
+	var newLL = {x: [llHistory['x']], y: [llHistory['y']]};
+	Plotly.restyle('visLL', newLL, 0);
+
+}
+
+
+</script>
+
+</head>
+<body>
+		<div id="wrapper">
+			<div id="vis" style="width: 700px; height: 150px; margin: 0 auto; "></div>
+			<div id="clickPts" style="width: 700px; height: 50px; margin: 0 auto; "></div>
+			<div id="modelDescription"  style="width: 700px; height: 50px; margin: 0 auto;"></div>
+			<div id="visWeights" style="width: 700px; height: 150px; margin: 0 auto; "></div>
+			<div id="visModel" style="width: 700px; height: 150px; margin: 0 auto; "></div>
+			<div id="visLL" style="width: 700px; height: 150px; margin: 0 auto; "></div>
+			<div id="modelPrediction"  style="width: 700px; height: 50px; margin: 0 auto;"></div>
+
+			<div id="menu">
+				<p>
+					<button id="generate" type="button">Generate Data</button><br>
+					<button id="stepEM" class="ui-btn">Step EM</button><br>
+					<button id="toggleEM" class="ui-btn">Start EM</button><br>
+					<button id="resetEM" class="ui-btn">Reset EM</button>
+				</p>
+			</div>
+		</div>
+
+</body>
+</html>
